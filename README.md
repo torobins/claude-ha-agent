@@ -81,6 +81,10 @@ Bot: Indoor: 72°F (thermostat)
 
 - `/start` - Welcome message and help
 - `/status` - Check bot and Home Assistant connection status
+- `/model` - View or change Claude model (haiku/sonnet/opus)
+- `/usage` - View today's token usage and estimated cost
+- `/reset` - Reset today's usage stats to zero
+- `/limit` - View or set daily token limit
 - `/clear` - Clear conversation history
 
 ## Configuration
@@ -90,7 +94,7 @@ Bot: Indoor: 72°F (thermostat)
 | Setting | Description |
 |---------|-------------|
 | `home_assistant.url` | Your HA instance URL |
-| `claude.model` | Claude model to use (default: claude-sonnet-4-20250514) |
+| `claude.model` | Claude model to use (default: claude-haiku-4-5-20251001) |
 | `claude.max_history` | Conversation history length |
 | `telegram.authorized_users` | List of allowed Telegram user IDs |
 | `telegram.notification_chat_id` | Where to send scheduled task results |
@@ -142,14 +146,68 @@ The agent can:
    - `/app/data` → `/mnt/user/appdata/claude-ha-agent/data`
 3. Set the environment variables in the container settings
 
+### Docker DNS for .local Hostnames
+
+Docker containers cannot resolve mDNS `.local` hostnames by default. If your Home Assistant uses `homeassistant.local`, add an `extra_hosts` entry to `docker-compose.yml`:
+
+```yaml
+services:
+  claude-ha-agent:
+    # ... other config ...
+    extra_hosts:
+      - "homeassistant.local:192.168.1.XX"  # Replace with your HA IP
+```
+
+Find your HA IP by pinging it from the host: `ping homeassistant.local`
+
+## Important: Config File Management
+
+**The `config/config.yaml` file contains your personalized settings** (Telegram user ID, HA URL, model preference). The repository contains only a template with placeholder values.
+
+### Avoiding Config Overwrites
+
+When updating the deployment:
+
+```bash
+# SAFE: Pull and rebuild (preserves local config)
+git pull
+docker-compose build
+docker-compose up -d
+
+# DANGER: Hard reset will overwrite your config!
+git reset --hard origin/master  # ⚠️ This destroys local config changes
+```
+
+If you accidentally reset your config, you'll see these errors:
+- `"Sorry, you're not authorized"` - Telegram user ID was reset to placeholder
+- `"Cannot connect to host homeassistant.local"` - Docker can't resolve mDNS
+- `"Failed to connect to Home Assistant"` - HA URL or token issue
+
+### Recommended: Backup Your Config
+
+Before any git operations on the deployment server:
+
+```bash
+# Backup config
+cp config/config.yaml config/config.yaml.backup
+cp docker-compose.yml docker-compose.yml.backup
+
+# After git operations, restore if needed
+cp config/config.yaml.backup config/config.yaml
+```
+
+### Alternative: Use Environment Variables
+
+For sensitive deployments, you can override config via environment variables instead of editing `config.yaml` directly. This keeps your secrets out of version control entirely.
+
 ## Cost Considerations
 
 The agent uses Claude API which has per-token costs:
-- **Claude Sonnet** (recommended): ~$3/$15 per million input/output tokens
-- **Claude Haiku** (budget): ~$0.80/$4 per million tokens
-- **Claude Opus** (premium): ~$15/$45 per million tokens
+- **Claude Haiku** (default): ~$0.80/$4 per million input/output tokens - fastest, most cost-effective
+- **Claude Sonnet**: ~$3/$15 per million tokens - good balance of capability and cost
+- **Claude Opus**: ~$15/$75 per million tokens - most capable, highest cost
 
-A typical conversation costs fractions of a cent. Scheduled tasks are similarly inexpensive.
+A typical conversation costs fractions of a cent. Use `/usage` to monitor your daily token consumption and `/model` to switch between models based on your needs.
 
 ## Development
 
