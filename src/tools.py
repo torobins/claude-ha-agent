@@ -2,6 +2,7 @@
 
 import json
 import logging
+import re
 from typing import Any
 
 from .ha_client import get_ha_client
@@ -11,7 +12,244 @@ from .aliases import get_alias_manager
 logger = logging.getLogger(__name__)
 
 
-# Tool definitions for Claude API
+# =============================================================================
+# Individual Tool Definitions
+# =============================================================================
+
+TOOL_GET_ENTITY_STATE = {
+    "name": "get_entity_state",
+    "description": "Get the current state of a Home Assistant entity. Use this to check if lights are on/off, doors locked/unlocked, sensor values, etc.",
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "entity_id": {
+                "type": "string",
+                "description": "The entity ID (e.g., 'light.living_room') or a natural language name"
+            }
+        },
+        "required": ["entity_id"]
+    }
+}
+
+TOOL_GET_ENTITIES_BY_DOMAIN = {
+    "name": "get_entities_by_domain",
+    "description": "List entities in a domain (max 25). Use for small domains like lock, climate.",
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "domain": {
+                "type": "string",
+                "description": "The domain (e.g., 'lock', 'climate', 'light')"
+            }
+        },
+        "required": ["domain"]
+    }
+}
+
+TOOL_TURN_ON = {
+    "name": "turn_on",
+    "description": "Turn on a light, switch, or other entity.",
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "entity_id": {"type": "string", "description": "Entity ID or name"},
+            "brightness": {"type": "integer", "description": "Brightness 0-255 (lights)"},
+        },
+        "required": ["entity_id"]
+    }
+}
+
+TOOL_TURN_OFF = {
+    "name": "turn_off",
+    "description": "Turn off a light, switch, or other entity.",
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "entity_id": {"type": "string", "description": "Entity ID or name"}
+        },
+        "required": ["entity_id"]
+    }
+}
+
+TOOL_TOGGLE = {
+    "name": "toggle",
+    "description": "Toggle an entity on/off.",
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "entity_id": {"type": "string", "description": "Entity ID or name"}
+        },
+        "required": ["entity_id"]
+    }
+}
+
+TOOL_LOCK = {
+    "name": "lock_door",
+    "description": "Lock a door lock.",
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "entity_id": {"type": "string", "description": "Lock entity ID or name (e.g., 'front door')"}
+        },
+        "required": ["entity_id"]
+    }
+}
+
+TOOL_UNLOCK = {
+    "name": "unlock_door",
+    "description": "Unlock a door lock.",
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "entity_id": {"type": "string", "description": "Lock entity ID or name"}
+        },
+        "required": ["entity_id"]
+    }
+}
+
+TOOL_SET_CLIMATE = {
+    "name": "set_climate",
+    "description": "Set thermostat/climate temperature or mode.",
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "entity_id": {"type": "string", "description": "Climate entity ID or name"},
+            "temperature": {"type": "number", "description": "Target temperature"},
+            "hvac_mode": {"type": "string", "description": "Mode: heat, cool, auto, off"}
+        },
+        "required": ["entity_id"]
+    }
+}
+
+TOOL_GET_HISTORY = {
+    "name": "get_history",
+    "description": "Get state history for an entity.",
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "entity_id": {"type": "string", "description": "Entity ID or name"},
+            "hours": {"type": "integer", "description": "Hours of history (default: 24)"}
+        },
+        "required": ["entity_id"]
+    }
+}
+
+TOOL_CALL_SERVICE = {
+    "name": "call_service",
+    "description": "Call any Home Assistant service directly.",
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "domain": {"type": "string", "description": "Service domain"},
+            "service": {"type": "string", "description": "Service name"},
+            "entity_id": {"type": "string", "description": "Optional entity ID"},
+            "data": {"type": "object", "description": "Optional service data"}
+        },
+        "required": ["domain", "service"]
+    }
+}
+
+TOOL_TRIGGER_AUTOMATION = {
+    "name": "trigger_automation",
+    "description": "Trigger a Home Assistant automation or scene.",
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "entity_id": {"type": "string", "description": "Automation/scene entity ID or name"}
+        },
+        "required": ["entity_id"]
+    }
+}
+
+TOOL_SAVE_ALIAS = {
+    "name": "save_entity_alias",
+    "description": "Remember a nickname for an entity.",
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "alias": {"type": "string", "description": "The nickname"},
+            "entity_id": {"type": "string", "description": "The actual entity_id"}
+        },
+        "required": ["alias", "entity_id"]
+    }
+}
+
+
+# =============================================================================
+# Tool Groups
+# =============================================================================
+
+TOOL_GROUPS = {
+    "core": {
+        "tools": [TOOL_GET_ENTITY_STATE, TOOL_SAVE_ALIAS],
+        "keywords": [],  # Always included
+    },
+    "control": {
+        "tools": [TOOL_TURN_ON, TOOL_TURN_OFF, TOOL_TOGGLE],
+        "keywords": ["turn", "switch", "on", "off", "toggle", "light", "lamp", "fan"],
+    },
+    "security": {
+        "tools": [TOOL_LOCK, TOOL_UNLOCK],
+        "keywords": ["lock", "unlock", "door", "secure", "secured"],
+    },
+    "climate": {
+        "tools": [TOOL_SET_CLIMATE],
+        "keywords": ["temp", "temperature", "heat", "cool", "thermostat", "hvac", "degree", "warm", "cold"],
+    },
+    "query": {
+        "tools": [TOOL_GET_ENTITIES_BY_DOMAIN, TOOL_GET_HISTORY],
+        "keywords": ["list", "all", "show", "history", "what", "which", "how many", "status", "check"],
+    },
+    "advanced": {
+        "tools": [TOOL_CALL_SERVICE, TOOL_TRIGGER_AUTOMATION],
+        "keywords": ["automation", "scene", "script", "service", "run", "trigger", "activate"],
+    },
+}
+
+
+def select_tools_for_message(message: str) -> list[dict]:
+    """
+    Select relevant tools based on message content.
+    Returns a list of tool definitions.
+    """
+    msg_lower = message.lower()
+    selected_tools = []
+    matched_groups = set()
+
+    # Always include core tools
+    selected_tools.extend(TOOL_GROUPS["core"]["tools"])
+    matched_groups.add("core")
+
+    # Check each group's keywords
+    for group_name, group_data in TOOL_GROUPS.items():
+        if group_name == "core":
+            continue
+
+        for keyword in group_data["keywords"]:
+            # Use word boundary matching for short keywords
+            if len(keyword) <= 3:
+                pattern = rf'\b{re.escape(keyword)}\b'
+                if re.search(pattern, msg_lower):
+                    if group_name not in matched_groups:
+                        selected_tools.extend(group_data["tools"])
+                        matched_groups.add(group_name)
+                    break
+            elif keyword in msg_lower:
+                if group_name not in matched_groups:
+                    selected_tools.extend(group_data["tools"])
+                    matched_groups.add(group_name)
+                break
+
+    # If only core matched, add query tools as fallback (for questions)
+    if matched_groups == {"core"}:
+        selected_tools.extend(TOOL_GROUPS["query"]["tools"])
+        matched_groups.add("query")
+
+    logger.info(f"Selected tool groups: {matched_groups} ({len(selected_tools)} tools)")
+    return selected_tools
+
+
+# Full tool list (for backwards compatibility)
 TOOLS = [
     {
         "name": "get_entity_state",

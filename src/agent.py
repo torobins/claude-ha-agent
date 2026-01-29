@@ -6,7 +6,7 @@ from typing import Optional
 import anthropic
 
 from .config import get_config
-from .tools import TOOLS, execute_tool, format_tool_result
+from .tools import select_tools_for_message, execute_tool, format_tool_result
 from .ha_cache import get_cache
 from .aliases import get_alias_manager
 from .usage import get_usage_tracker
@@ -127,6 +127,9 @@ async def run_agent(
     total_input_tokens = 0
     total_output_tokens = 0
 
+    # Select tools based on user message (dynamic tool selection for token savings)
+    selected_tools = select_tools_for_message(user_message)
+
     for iteration in range(max_iterations):
         logger.debug(f"Agent iteration {iteration + 1}")
 
@@ -134,7 +137,7 @@ async def run_agent(
             model=config.claude.model,
             max_tokens=4096,
             system=system_prompt,
-            tools=TOOLS,
+            tools=selected_tools,
             messages=messages
         )
 
