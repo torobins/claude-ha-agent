@@ -29,13 +29,13 @@ TOOLS = [
     },
     {
         "name": "get_entities_by_domain",
-        "description": "List all entities in a specific domain with their current states. Domains include: light, switch, lock, sensor, binary_sensor, climate, cover, media_player, automation, script, etc.",
+        "description": "List entities in a specific domain (max 25 results). Use for small domains like lock, climate. For large domains like sensor/light, prefer get_entity_state with a specific name. Domains: light, switch, lock, sensor, binary_sensor, climate, cover, media_player, automation, script.",
         "input_schema": {
             "type": "object",
             "properties": {
                 "domain": {
                     "type": "string",
-                    "description": "The domain to list entities for (e.g., 'light', 'lock', 'sensor')"
+                    "description": "The domain to list (e.g., 'lock', 'climate'). Avoid 'sensor' - too many results."
                 }
             },
             "required": ["domain"]
@@ -277,14 +277,25 @@ async def execute_tool(name: str, arguments: dict) -> Any:
         elif name == "get_entities_by_domain":
             domain = arguments["domain"]
             states = await ha.get_states(domain)
-            return [
-                {
-                    "entity_id": s["entity_id"],
-                    "state": s["state"],
-                    "friendly_name": s.get("attributes", {}).get("friendly_name")
-                }
-                for s in states
-            ]
+            total_count = len(states)
+            # Limit to 25 results to avoid token bloat
+            limited_states = states[:25]
+            result = {
+                "domain": domain,
+                "total_count": total_count,
+                "showing": len(limited_states),
+                "entities": [
+                    {
+                        "entity_id": s["entity_id"],
+                        "state": s["state"],
+                        "friendly_name": s.get("attributes", {}).get("friendly_name")
+                    }
+                    for s in limited_states
+                ]
+            }
+            if total_count > 25:
+                result["note"] = f"Showing first 25 of {total_count}. Use get_entity_state with a specific name for others."
+            return result
 
         elif name == "turn_on":
             entity_id = resolve_entity(arguments["entity_id"])
