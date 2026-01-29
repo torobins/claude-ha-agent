@@ -9,6 +9,7 @@ from .config import get_config
 from .tools import TOOLS, execute_tool, format_tool_result
 from .ha_cache import get_cache
 from .aliases import get_alias_manager
+from .usage import get_usage_tracker
 
 logger = logging.getLogger(__name__)
 
@@ -60,7 +61,7 @@ def build_system_prompt() -> str:
 async def run_agent(
     user_message: str,
     conversation_history: Optional[list] = None
-) -> tuple[str, list]:
+) -> tuple[str, list, Optional[str]]:
     """
     Run the agent with a user message and return the response.
 
@@ -69,10 +70,16 @@ async def run_agent(
         conversation_history: Previous messages for context
 
     Returns:
-        Tuple of (response_text, updated_conversation_history)
+        Tuple of (response_text, updated_conversation_history, warning_message)
     """
     config = get_config()
     client = anthropic.Anthropic(api_key=config.claude.api_key)
+    tracker = get_usage_tracker()
+
+    # Check budget before proceeding
+    allowed, budget_warning = tracker.check_budget()
+    if not allowed:
+        return budget_warning, conversation_history or [], None
 
     # Build messages list
     messages = list(conversation_history) if conversation_history else []
@@ -80,6 +87,8 @@ async def run_agent(
 
     system_prompt = build_system_prompt()
     max_iterations = 10  # Prevent infinite loops
+    total_input_tokens = 0
+    total_output_tokens = 0
 
     for iteration in range(max_iterations):
         logger.debug(f"Agent iteration {iteration + 1}")
@@ -92,7 +101,10 @@ async def run_agent(
             messages=messages
         )
 
-        logger.debug(f"Response stop_reason: {response.stop_reason}")
+        # Track token usage
+        total_input_tokens += response.usage.input_tokens
+        total_output_tokens += response.usage.output_tokens
+        logger.debug(f"Response stop_reason: {response.stop_reason}, tokens: {response.usage.input_tokens}+{response.usage.output_tokens}")
 
         # Check if Claude wants to use tools
         if response.stop_reason == "tool_use":
@@ -145,11 +157,16 @@ async def run_agent(
             if len(messages) > max_history:
                 messages = messages[-max_history:]
 
-            return response_text, messages
+            # Record token usage
+            tracker.record_usage(total_input_tokens, total_output_tokens)
+            logger.info(f"Request complete: {total_input_tokens} input + {total_output_tokens} output tokens")
+
+            return response_text, messages, budget_warning
 
     # If we hit max iterations, return what we have
+    tracker.record_usage(total_input_tokens, total_output_tokens)
     logger.warning("Agent hit max iterations")
-    return "I apologize, but I wasn't able to complete that request. Please try rephrasing or breaking it into smaller steps.", messages
+    return "I apologize, but I wasn't able to complete that request. Please try rephrasing or breaking it into smaller steps.", messages, budget_warning
 
 
 async def run_scheduled_prompt(prompt: str) -> str:
@@ -157,5 +174,5 @@ async def run_scheduled_prompt(prompt: str) -> str:
     Run a scheduled prompt without conversation history.
     Returns just the response text.
     """
-    response_text, _ = await run_agent(prompt, conversation_history=None)
+    response_text, _, _ = await run_agent(prompt, conversation_history=None)
     return response_text

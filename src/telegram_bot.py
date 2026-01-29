@@ -14,6 +14,7 @@ from telegram.ext import (
 
 from .config import get_config, set_model, get_current_model, AVAILABLE_MODELS
 from .agent import run_agent
+from .usage import get_usage_tracker
 
 logger = logging.getLogger(__name__)
 
@@ -68,6 +69,8 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "Commands:\n"
         "/status - Bot status\n"
         "/model - View/change AI model\n"
+        "/usage - Token usage stats\n"
+        "/limit - Set daily token limit\n"
         "/clear - Reset conversation"
     )
 
@@ -146,6 +149,65 @@ async def model_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
 
+async def usage_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle /usage command - show token usage stats."""
+    user_id = update.effective_user.id
+
+    if not is_authorized(user_id):
+        return
+
+    tracker = get_usage_tracker()
+    friendly_model, _ = get_current_model()
+    summary = tracker.get_usage_summary(friendly_model)
+    await update.message.reply_text(summary)
+
+
+async def limit_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle /limit command - view or set daily token limit."""
+    user_id = update.effective_user.id
+
+    if not is_authorized(user_id):
+        return
+
+    tracker = get_usage_tracker()
+
+    if context.args and len(context.args) > 0:
+        arg = context.args[0].lower()
+
+        # Handle "hard" subcommand
+        if arg == "hard":
+            if len(context.args) > 1:
+                enabled = context.args[1].lower() in ("on", "true", "yes", "1")
+                tracker.set_hard_limit(enabled)
+                status = "enabled" if enabled else "disabled"
+                await update.message.reply_text(f"Hard limit {status}. Bot will {'block' if enabled else 'warn only'} when limit is reached.")
+            else:
+                status = "enabled" if tracker.config.hard_limit_enabled else "disabled"
+                await update.message.reply_text(f"Hard limit is currently {status}.\nUsage: /limit hard on|off")
+            return
+
+        # Set new limit
+        try:
+            new_limit = int(arg.replace(",", "").replace("k", "000"))
+            tracker.set_daily_limit(new_limit)
+            await update.message.reply_text(f"Daily token limit set to {new_limit:,}")
+        except ValueError:
+            await update.message.reply_text("Invalid limit. Use a number like: /limit 50000")
+    else:
+        # Show current limits
+        cfg = tracker.config
+        hard_status = "ON (will block)" if cfg.hard_limit_enabled else "OFF (warn only)"
+        await update.message.reply_text(
+            f"Token Limits:\n"
+            f"- Daily limit: {cfg.daily_token_limit:,} tokens\n"
+            f"- Warning at: {cfg.warning_threshold:.0%} of limit\n"
+            f"- Hard limit: {hard_status}\n\n"
+            f"Commands:\n"
+            f"/limit <number> - Set daily limit\n"
+            f"/limit hard on|off - Enable/disable hard limit"
+        )
+
+
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle incoming messages."""
     user_id = update.effective_user.id
@@ -170,7 +232,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         history = get_history(user_id)
 
         # Run agent
-        response, updated_history = await run_agent(user_message, history)
+        response, updated_history, warning = await run_agent(user_message, history)
 
         # Save updated history
         set_history(user_id, updated_history)
@@ -182,6 +244,10 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await update.message.reply_text(response[i:i + max_length])
         else:
             await update.message.reply_text(response)
+
+        # Send budget warning if applicable
+        if warning:
+            await update.message.reply_text(f"⚠️ {warning}")
 
     except Exception as e:
         logger.error(f"Error handling message: {e}", exc_info=True)
@@ -217,6 +283,8 @@ def create_application() -> Application:
     app.add_handler(CommandHandler("clear", clear_command))
     app.add_handler(CommandHandler("status", status_command))
     app.add_handler(CommandHandler("model", model_command))
+    app.add_handler(CommandHandler("usage", usage_command))
+    app.add_handler(CommandHandler("limit", limit_command))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
     return app

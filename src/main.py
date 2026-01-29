@@ -22,6 +22,7 @@ async def main():
     from .ha_client import init_ha_client, get_ha_client
     from .ha_cache import init_cache, get_cache
     from .aliases import init_alias_manager
+    from .usage import init_usage_tracker
     from .telegram_bot import init_telegram_app
     from .scheduler import init_scheduler, start_scheduler
 
@@ -64,6 +65,10 @@ async def main():
         # Initialize alias manager
         init_alias_manager(config.cache.data_dir)
         logger.info("Alias manager initialized")
+
+        # Initialize usage tracker
+        init_usage_tracker(config.cache.data_dir)
+        logger.info("Usage tracker initialized")
 
         # Initialize Telegram bot
         app = init_telegram_app()
