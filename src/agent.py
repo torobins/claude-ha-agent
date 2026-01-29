@@ -120,21 +120,19 @@ async def try_direct_execution(
 
     cache = get_cache()
 
-    # Try to resolve the entity
-    if intent_result.entity:
-        resolved_entity = resolve_entity(intent_result.entity)
-
-        # Check if resolution worked (entity exists in cache)
-        entity_info = cache.get_entity(resolved_entity)
+    # Claude already resolved to entity_id - just validate it exists
+    if intent_result.entity_id:
+        entity_info = cache.get_entity(intent_result.entity_id)
 
         if not entity_info:
-            # Couldn't resolve to a real entity - fall back to full agent
-            logger.info(f"Could not resolve entity '{intent_result.entity}' -> '{resolved_entity}'")
+            # Entity doesn't exist - fall back to full agent
+            logger.info(f"Entity not found in cache: {intent_result.entity_id}")
             return None, None, 0, 0
 
+        resolved_entity = intent_result.entity_id
         entity_name = entity_info.get("friendly_name", resolved_entity)
     else:
-        # Some intents might not need an entity (e.g., "what's the temperature" could default)
+        # No entity provided - fall back to full agent for most intents
         resolved_entity = None
         entity_name = None
 

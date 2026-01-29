@@ -9,6 +9,7 @@ from dataclasses import dataclass
 import anthropic
 
 from .config import get_config
+from .ha_cache import get_cache
 
 logger = logging.getLogger(__name__)
 
@@ -17,7 +18,7 @@ logger = logging.getLogger(__name__)
 class ExtractedIntent:
     """Result of intent extraction."""
     intent: str  # turn_on, turn_off, toggle, lock, unlock, get_state, set_climate, unknown
-    entity: Optional[str]  # Raw entity reference from user
+    entity_id: Optional[str]  # Actual entity_id from HA (e.g., "light.kitchen")
     confidence: str  # high, medium, low
     value: Optional[str] = None  # For climate: temperature or mode
     needs_full_agent: bool = False  # True if this should go to full agent
@@ -44,20 +45,72 @@ COMPLEX_KEYWORDS = [
     "scene", "script",
 ]
 
-INTENT_EXTRACTION_PROMPT = """Extract the intent and entity from this smart home command.
+INTENT_EXTRACTION_PROMPT = """Extract the intent and entity_id from this smart home command.
 
-Respond ONLY with JSON, no other text:
-{"intent": "<intent>", "entity": "<entity or null>", "confidence": "<high/medium/low>", "value": "<value or null>"}
+Available entities:
+{entity_list}
+
+Respond ONLY with JSON:
+{{"intent": "<intent>", "entity_id": "<exact entity_id from list or null>", "confidence": "<high/medium/low>", "value": "<value or null>"}}
 
 Intents: turn_on, turn_off, toggle, lock, unlock, get_state, set_climate, unknown
 
+Pick the entity_id that best matches what the user is asking about. Use semantic understanding, not just word matching.
+
 Examples:
-"turn on the kitchen light" → {"intent": "turn_on", "entity": "kitchen light", "confidence": "high", "value": null}
-"is the front door locked" → {"intent": "get_state", "entity": "front door", "confidence": "high", "value": null}
-"set temp to 72" → {"intent": "set_climate", "entity": null, "confidence": "medium", "value": "72"}
-"what's the weather like" → {"intent": "unknown", "entity": null, "confidence": "low", "value": null}
+- "turn on the kitchen light" → {{"intent": "turn_on", "entity_id": "light.kitchen_light", "confidence": "high", "value": null}}
+- "is the front door locked" → {{"intent": "get_state", "entity_id": "lock.front_door", "confidence": "high", "value": null}}
+- "how much power" → {{"intent": "get_state", "entity_id": "sensor.power_total", "confidence": "high", "value": null}}
+- "set temp to 72" → {{"intent": "set_climate", "entity_id": "climate.thermostat", "confidence": "high", "value": "72"}}
+- "why is it cold" → {{"intent": "unknown", "entity_id": null, "confidence": "low", "value": null}}
 
 Command: """
+
+
+def get_condensed_entity_list() -> str:
+    """Get a condensed entity list from cache for the prompt."""
+    cache = get_cache()
+    entities = cache.data.get("entities", [])
+
+    # Group by domain, showing friendly_name → entity_id
+    by_domain: dict[str, list[str]] = {}
+
+    # Priority domains to always include
+    priority_domains = {"light", "switch", "lock", "sensor", "climate", "cover", "fan"}
+
+    for entity in entities:
+        entity_id = entity.get("entity_id", "")
+        friendly_name = entity.get("friendly_name", "")
+        domain = entity_id.split(".")[0] if "." in entity_id else ""
+
+        if not domain:
+            continue
+
+        if domain not in by_domain:
+            by_domain[domain] = []
+
+        # Format: "friendly_name (entity_id)" or just "entity_id"
+        if friendly_name and friendly_name != entity_id:
+            by_domain[domain].append(f"{friendly_name}: {entity_id}")
+        else:
+            by_domain[domain].append(entity_id)
+
+    # Build condensed list - prioritize important domains
+    lines = []
+
+    # Priority domains first
+    for domain in priority_domains:
+        if domain in by_domain:
+            items = by_domain[domain][:15]  # Limit per domain
+            lines.append(f"{domain}: {', '.join(items)}")
+
+    # Other domains (abbreviated)
+    other_domains = [d for d in by_domain if d not in priority_domains]
+    for domain in sorted(other_domains)[:5]:  # Limit other domains
+        items = by_domain[domain][:5]
+        lines.append(f"{domain}: {', '.join(items)}")
+
+    return "\n".join(lines)
 
 
 def should_use_full_agent(message: str) -> bool:
@@ -92,7 +145,7 @@ async def extract_intent(message: str) -> ExtractedIntent:
         logger.info(f"Message needs full agent: '{message[:50]}...'")
         return ExtractedIntent(
             intent="unknown",
-            entity=None,
+            entity_id=None,
             confidence="low",
             needs_full_agent=True
         )
@@ -100,13 +153,19 @@ async def extract_intent(message: str) -> ExtractedIntent:
     config = get_config()
     client = anthropic.Anthropic(api_key=config.claude.api_key)
 
+    # Get condensed entity list from cache
+    entity_list = get_condensed_entity_list()
+
+    # Build prompt with entity list
+    prompt = INTENT_EXTRACTION_PROMPT.format(entity_list=entity_list) + message
+
     try:
         response = client.messages.create(
             model=config.claude.model,
             max_tokens=100,
             messages=[{
                 "role": "user",
-                "content": INTENT_EXTRACTION_PROMPT + message
+                "content": prompt
             }]
         )
 
@@ -126,15 +185,25 @@ async def extract_intent(message: str) -> ExtractedIntent:
                 logger.warning(f"Could not parse intent response: {response_text}")
                 return ExtractedIntent(
                     intent="unknown",
-                    entity=None,
+                    entity_id=None,
                     confidence="low",
                     needs_full_agent=True
                 )
 
         intent = data.get("intent", "unknown")
-        entity = data.get("entity")
+        entity_id = data.get("entity_id")
         confidence = data.get("confidence", "low")
         value = data.get("value")
+
+        # Validate entity_id exists in cache if provided
+        if entity_id:
+            cache = get_cache()
+            if not cache.get_entity(entity_id):
+                logger.warning(f"Claude returned non-existent entity: {entity_id}")
+                # Try to find it anyway - might be a slight mismatch
+                # Fall back to full agent if entity doesn't exist
+                entity_id = None
+                confidence = "low"
 
         # If intent is unknown or confidence is low, use full agent
         needs_full = intent == "unknown" or confidence == "low"
@@ -143,14 +212,18 @@ async def extract_intent(message: str) -> ExtractedIntent:
         if intent not in SIMPLE_INTENTS:
             needs_full = True
 
+        # If we need an entity but don't have one, use full agent
+        if intent in {"turn_on", "turn_off", "toggle", "lock", "unlock", "get_state"} and not entity_id:
+            needs_full = True
+
         # Log token usage
         input_tokens = response.usage.input_tokens
         output_tokens = response.usage.output_tokens
-        logger.info(f"Intent extraction: {input_tokens}+{output_tokens} tokens, intent={intent}, entity={entity}")
+        logger.info(f"Intent extraction: {input_tokens}+{output_tokens} tokens, intent={intent}, entity_id={entity_id}")
 
         return ExtractedIntent(
             intent=intent,
-            entity=entity,
+            entity_id=entity_id,
             confidence=confidence,
             value=value,
             needs_full_agent=needs_full,
@@ -163,7 +236,7 @@ async def extract_intent(message: str) -> ExtractedIntent:
         # Fall back to full agent on error
         return ExtractedIntent(
             intent="unknown",
-            entity=None,
+            entity_id=None,
             confidence="low",
             needs_full_agent=True
         )
