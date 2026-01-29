@@ -9,6 +9,17 @@ import yaml
 from dotenv import load_dotenv
 
 
+# Available Claude models with friendly names
+AVAILABLE_MODELS = {
+    "haiku": "claude-haiku-4-5-20251001",
+    "sonnet": "claude-sonnet-4-20250514",
+    "opus": "claude-opus-4-5-20251101",
+}
+
+# Reverse lookup: full model ID -> friendly name
+MODEL_NAMES = {v: k for k, v in AVAILABLE_MODELS.items()}
+
+
 @dataclass
 class HomeAssistantConfig:
     url: str
@@ -139,3 +150,41 @@ def init_config(config_dir: str = "/app/config") -> Config:
     global _config
     _config = load_config(config_dir)
     return _config
+
+
+def set_model(model_name: str) -> tuple[bool, str]:
+    """
+    Set the Claude model at runtime.
+
+    Args:
+        model_name: Either a friendly name (haiku, sonnet, opus) or full model ID
+
+    Returns:
+        Tuple of (success, message)
+    """
+    global _config
+    if _config is None:
+        return False, "Config not initialized"
+
+    # Check if it's a friendly name
+    if model_name.lower() in AVAILABLE_MODELS:
+        full_model_id = AVAILABLE_MODELS[model_name.lower()]
+        friendly_name = model_name.lower()
+    # Check if it's already a full model ID
+    elif model_name in MODEL_NAMES:
+        full_model_id = model_name
+        friendly_name = MODEL_NAMES[model_name]
+    else:
+        available = ", ".join(AVAILABLE_MODELS.keys())
+        return False, f"Unknown model '{model_name}'. Available: {available}"
+
+    _config.claude.model = full_model_id
+    return True, f"Model switched to {friendly_name} ({full_model_id})"
+
+
+def get_current_model() -> tuple[str, str]:
+    """Get the current model as (friendly_name, full_model_id)."""
+    config = get_config()
+    full_id = config.claude.model
+    friendly = MODEL_NAMES.get(full_id, "unknown")
+    return friendly, full_id

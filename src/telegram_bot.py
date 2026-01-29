@@ -12,7 +12,7 @@ from telegram.ext import (
     filters
 )
 
-from .config import get_config
+from .config import get_config, set_model, get_current_model, AVAILABLE_MODELS
 from .agent import run_agent
 
 logger = logging.getLogger(__name__)
@@ -65,7 +65,10 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "- Control devices: \"Turn off the kitchen lights\"\n"
         "- Get information: \"What's the temperature?\"\n"
         "- And more!\n\n"
-        "Use /clear to reset our conversation history."
+        "Commands:\n"
+        "/status - Bot status\n"
+        "/model - View/change AI model\n"
+        "/clear - Reset conversation"
     )
 
 
@@ -101,13 +104,46 @@ async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     history_len = len(get_history(user_id))
     cache_summary = cache.get_entity_summary()
+    friendly_model, full_model = get_current_model()
 
     await update.message.reply_text(
         f"Bot Status:\n"
         f"- Home Assistant: {status}\n"
+        f"- Model: {friendly_model}\n"
         f"- {cache_summary}\n"
         f"- Your conversation history: {history_len} messages"
     )
+
+
+async def model_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle /model command - view or change the Claude model."""
+    user_id = update.effective_user.id
+
+    if not is_authorized(user_id):
+        return
+
+    # Check if user provided a model name
+    if context.args and len(context.args) > 0:
+        model_name = context.args[0]
+        success, message = set_model(model_name)
+        await update.message.reply_text(message)
+    else:
+        # Show current model and available options
+        friendly_name, full_id = get_current_model()
+        models_list = "\n".join([
+            f"  - {name}: {desc}"
+            for name, desc in [
+                ("haiku", "Fastest, cheapest"),
+                ("sonnet", "Balanced"),
+                ("opus", "Most capable"),
+            ]
+        ])
+        await update.message.reply_text(
+            f"Current model: {friendly_name}\n\n"
+            f"Available models:\n{models_list}\n\n"
+            f"Usage: /model <name>\n"
+            f"Example: /model haiku"
+        )
 
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -180,6 +216,7 @@ def create_application() -> Application:
     app.add_handler(CommandHandler("start", start_command))
     app.add_handler(CommandHandler("clear", clear_command))
     app.add_handler(CommandHandler("status", status_command))
+    app.add_handler(CommandHandler("model", model_command))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
     return app
