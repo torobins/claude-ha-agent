@@ -546,19 +546,37 @@ def resolve_entity(entity_ref: str) -> str:
     Resolve an entity reference (could be entity_id or natural language name).
     Returns the actual entity_id.
     """
-    # If it looks like an entity_id already, return it
-    if "." in entity_ref and not " " in entity_ref:
-        return entity_ref
-
-    # Try to resolve via aliases and cache
     cache = get_cache()
     alias_manager = get_alias_manager()
 
+    # If it looks like an entity_id, verify it exists
+    if "." in entity_ref and " " not in entity_ref:
+        # Check if this entity actually exists in cache
+        if cache.get_entity(entity_ref):
+            return entity_ref
+        # Entity doesn't exist - try fuzzy matching the name part
+        logger.warning(f"Entity '{entity_ref}' not found in cache, trying fuzzy match")
+        # Extract the name part (after the dot) and try to match
+        domain, name = entity_ref.split(".", 1)
+        search_term = name.replace("_", " ")
+        # Try alias resolution first
+        resolved = alias_manager.resolve(search_term, cache)
+        if resolved:
+            logger.info(f"Fuzzy resolved '{entity_ref}' -> '{resolved}'")
+            return resolved
+        # Try cache fuzzy match
+        resolved = cache.find_entity(search_term)
+        if resolved:
+            logger.info(f"Cache fuzzy matched '{entity_ref}' -> '{resolved}'")
+            return resolved
+
+    # Try to resolve via aliases and cache
     resolved = alias_manager.resolve(entity_ref, cache)
     if resolved:
         return resolved
 
     # Fallback: return as-is and let HA error
+    logger.warning(f"Could not resolve entity: '{entity_ref}'")
     return entity_ref
 
 
