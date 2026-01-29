@@ -70,6 +70,7 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/status - Bot status\n"
         "/model - View/change AI model\n"
         "/usage - Token usage stats\n"
+        "/reset - Reset today's usage\n"
         "/limit - Set daily token limit\n"
         "/clear - Reset conversation"
     )
@@ -160,6 +161,18 @@ async def usage_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     friendly_model, _ = get_current_model()
     summary = tracker.get_usage_summary(friendly_model)
     await update.message.reply_text(summary)
+
+
+async def reset_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle /reset command - reset today's usage stats."""
+    user_id = update.effective_user.id
+
+    if not is_authorized(user_id):
+        return
+
+    tracker = get_usage_tracker()
+    tracker.reset_today()
+    await update.message.reply_text("Today's usage has been reset to zero.")
 
 
 async def limit_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -291,6 +304,7 @@ def create_application() -> Application:
     app.add_handler(CommandHandler("status", status_command))
     app.add_handler(CommandHandler("model", model_command))
     app.add_handler(CommandHandler("usage", usage_command))
+    app.add_handler(CommandHandler("reset", reset_command))
     app.add_handler(CommandHandler("limit", limit_command))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 

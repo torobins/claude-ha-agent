@@ -171,6 +171,13 @@ class UsageTracker:
         self.config.hard_limit_enabled = enabled
         self._save()
 
+    def reset_today(self):
+        """Reset today's usage to zero."""
+        today = self._get_today()
+        self.daily_usage[today] = DailyUsage(date=today)
+        self._save()
+        logger.info("Reset today's usage to zero")
+
 
 # Global tracker instance
 _tracker: Optional[UsageTracker] = None
