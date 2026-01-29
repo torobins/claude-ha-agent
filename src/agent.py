@@ -6,10 +6,12 @@ from typing import Optional
 import anthropic
 
 from .config import get_config
-from .tools import select_tools_for_message, execute_tool, format_tool_result
+from .tools import select_tools_for_message, execute_tool, format_tool_result, resolve_entity
 from .ha_cache import get_cache
+from .ha_client import get_ha_client
 from .aliases import get_alias_manager
 from .usage import get_usage_tracker
+from .intent_extractor import extract_intent, get_response_template, SIMPLE_INTENTS
 
 logger = logging.getLogger(__name__)
 
@@ -95,6 +97,136 @@ def _clean_history(history: list) -> list:
     return cleaned
 
 
+async def try_direct_execution(
+    user_message: str,
+    conversation_history: Optional[list] = None
+) -> tuple[Optional[str], Optional[list], int, int]:
+    """
+    Try to handle a simple command directly without the full agent loop.
+
+    Returns:
+        Tuple of (response_text, updated_history, input_tokens, output_tokens)
+        If response_text is None, caller should fall back to full agent.
+    """
+    tracker = get_usage_tracker()
+
+    # Extract intent using lightweight Claude call
+    intent_result = await extract_intent(user_message)
+
+    # If needs full agent, return None to trigger fallback
+    if intent_result.needs_full_agent:
+        logger.info(f"Intent extraction suggests full agent needed")
+        return None, None, 0, 0
+
+    cache = get_cache()
+
+    # Try to resolve the entity
+    if intent_result.entity:
+        resolved_entity = resolve_entity(intent_result.entity)
+
+        # Check if resolution worked (entity exists in cache)
+        entity_info = cache.get_entity(resolved_entity)
+
+        if not entity_info:
+            # Couldn't resolve to a real entity - fall back to full agent
+            logger.info(f"Could not resolve entity '{intent_result.entity}' -> '{resolved_entity}'")
+            return None, None, 0, 0
+
+        entity_name = entity_info.get("friendly_name", resolved_entity)
+    else:
+        # Some intents might not need an entity (e.g., "what's the temperature" could default)
+        resolved_entity = None
+        entity_name = None
+
+    # Execute the intent directly
+    ha = get_ha_client()
+    success = True
+    state = None
+
+    try:
+        if intent_result.intent == "turn_on":
+            await ha.turn_on(resolved_entity)
+            logger.info(f"Direct execution: turn_on {resolved_entity}")
+
+        elif intent_result.intent == "turn_off":
+            await ha.turn_off(resolved_entity)
+            logger.info(f"Direct execution: turn_off {resolved_entity}")
+
+        elif intent_result.intent == "toggle":
+            await ha.toggle(resolved_entity)
+            logger.info(f"Direct execution: toggle {resolved_entity}")
+
+        elif intent_result.intent == "lock":
+            if not resolved_entity.startswith("lock."):
+                resolved_entity = f"lock.{resolved_entity.replace('lock.', '')}"
+            await ha.lock(resolved_entity)
+            logger.info(f"Direct execution: lock {resolved_entity}")
+
+        elif intent_result.intent == "unlock":
+            if not resolved_entity.startswith("lock."):
+                resolved_entity = f"lock.{resolved_entity.replace('lock.', '')}"
+            await ha.unlock(resolved_entity)
+            logger.info(f"Direct execution: unlock {resolved_entity}")
+
+        elif intent_result.intent == "get_state":
+            state_data = await ha.get_state(resolved_entity)
+            state = state_data.get("state", "unknown")
+            attrs = state_data.get("attributes", {})
+            unit = attrs.get("unit_of_measurement", "")
+            if unit:
+                state = f"{state} {unit}"
+            logger.info(f"Direct execution: get_state {resolved_entity} = {state}")
+
+        elif intent_result.intent == "set_climate":
+            # Try to parse temperature from value
+            if intent_result.value:
+                try:
+                    temp = float(intent_result.value.replace("°", "").replace("F", "").replace("C", "").strip())
+                    # Find a climate entity if none specified
+                    if not resolved_entity:
+                        climate_entities = cache.get_entities(domain="climate")
+                        if climate_entities:
+                            resolved_entity = climate_entities[0].get("entity_id")
+                            entity_name = climate_entities[0].get("friendly_name", resolved_entity)
+                    if resolved_entity:
+                        await ha.set_climate(resolved_entity, temperature=temp)
+                        logger.info(f"Direct execution: set_climate {resolved_entity} to {temp}")
+                    else:
+                        success = False
+                except ValueError:
+                    success = False
+            else:
+                success = False
+
+        else:
+            # Unknown intent - shouldn't happen but fall back
+            return None, None, 0, 0
+
+    except Exception as e:
+        logger.error(f"Direct execution failed: {e}")
+        success = False
+
+    # Generate response
+    response_text = get_response_template(
+        intent_result.intent,
+        entity_name or "device",
+        success,
+        state
+    )
+
+    # Update conversation history
+    messages = _clean_history(list(conversation_history)) if conversation_history else []
+    messages.append({"role": "user", "content": user_message})
+    messages.append({"role": "assistant", "content": response_text})
+
+    # Use actual token counts from intent extraction
+    input_tokens = intent_result.input_tokens
+    output_tokens = intent_result.output_tokens
+
+    logger.info(f"Direct execution complete: {intent_result.intent} on {entity_name} ({input_tokens}+{output_tokens} tokens)")
+    return response_text, messages, input_tokens, output_tokens
+
+
 async def run_agent(
     user_message: str,
     conversation_history: Optional[list] = None
@@ -117,6 +249,20 @@ async def run_agent(
     allowed, budget_warning = tracker.check_budget()
     if not allowed:
         return budget_warning, conversation_history or [], None
+
+    # Try direct execution first for simple commands
+    direct_response, direct_history, direct_input, direct_output = await try_direct_execution(
+        user_message, conversation_history
+    )
+
+    if direct_response is not None:
+        # Direct execution succeeded - record usage and return
+        tracker.record_usage(direct_input, direct_output)
+        logger.info(f"Direct execution used: {direct_input}+{direct_output} tokens (saved full agent loop)")
+        return direct_response, direct_history, budget_warning
+
+    # Fall back to full agent loop
+    logger.info("Using full agent loop")
 
     # Build messages list - clean history to remove any empty content
     messages = _clean_history(list(conversation_history)) if conversation_history else []
