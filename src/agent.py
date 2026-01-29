@@ -60,6 +60,41 @@ def build_system_prompt() -> str:
     )
 
 
+def _serialize_content(content) -> list:
+    """Serialize response content to a JSON-serializable format."""
+    result = []
+    for block in content:
+        if hasattr(block, "type"):
+            if block.type == "text":
+                result.append({"type": "text", "text": block.text})
+            elif block.type == "tool_use":
+                result.append({
+                    "type": "tool_use",
+                    "id": block.id,
+                    "name": block.name,
+                    "input": block.input
+                })
+    return result
+
+
+def _clean_history(history: list) -> list:
+    """Clean conversation history to ensure valid message format."""
+    cleaned = []
+    for msg in history:
+        if not msg.get("content"):
+            continue  # Skip empty content messages
+
+        content = msg["content"]
+        # Ensure content is not empty
+        if isinstance(content, str) and not content.strip():
+            continue
+        if isinstance(content, list) and len(content) == 0:
+            continue
+
+        cleaned.append(msg)
+    return cleaned
+
+
 async def run_agent(
     user_message: str,
     conversation_history: Optional[list] = None
@@ -83,8 +118,8 @@ async def run_agent(
     if not allowed:
         return budget_warning, conversation_history or [], None
 
-    # Build messages list
-    messages = list(conversation_history) if conversation_history else []
+    # Build messages list - clean history to remove any empty content
+    messages = _clean_history(list(conversation_history)) if conversation_history else []
     messages.append({"role": "user", "content": user_message})
 
     system_prompt = build_system_prompt()
@@ -110,10 +145,10 @@ async def run_agent(
 
         # Check if Claude wants to use tools
         if response.stop_reason == "tool_use":
-            # Add assistant's response to messages
+            # Add assistant's response to messages (serialized for JSON compatibility)
             messages.append({
                 "role": "assistant",
-                "content": response.content
+                "content": _serialize_content(response.content)
             })
 
             # Execute each tool call
@@ -147,6 +182,11 @@ async def run_agent(
             for content_block in response.content:
                 if hasattr(content_block, "text"):
                     response_text += content_block.text
+
+            # Ensure response is never empty
+            if not response_text.strip():
+                response_text = "Done."
+                logger.warning("Empty response from Claude, using fallback")
 
             # Add final response to history
             messages.append({

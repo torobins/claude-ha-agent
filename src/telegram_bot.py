@@ -237,11 +237,18 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Save updated history
         set_history(user_id, updated_history)
 
+        # Ensure response is not empty before sending
+        if not response or not response.strip():
+            response = "I processed your request but have no additional information to report."
+            logger.warning("Empty response from agent, using fallback")
+
         # Send response (split if too long)
         max_length = 4096
         if len(response) > max_length:
             for i in range(0, len(response), max_length):
-                await update.message.reply_text(response[i:i + max_length])
+                chunk = response[i:i + max_length]
+                if chunk.strip():  # Only send non-empty chunks
+                    await update.message.reply_text(chunk)
         else:
             await update.message.reply_text(response)
 
