@@ -186,23 +186,90 @@ TOOL_GROUPS = {
     },
     "control": {
         "tools": [TOOL_TURN_ON, TOOL_TURN_OFF, TOOL_TOGGLE],
-        "keywords": ["turn", "switch", "on", "off", "toggle", "light", "lamp", "fan"],
+        "keywords": [
+            # Actions
+            "turn", "switch", "toggle", "flip",
+            "on", "off",
+            "enable", "disable",
+            "start", "stop",
+            "open", "close",  # for covers/blinds
+            # Brightness
+            "dim", "bright", "brighten", "brightness", "darker", "lighter",
+            # Device types
+            "light", "lights", "lamp", "lamps",
+            "fan", "fans",
+            "plug", "outlet",
+            "bulb",
+        ],
     },
     "security": {
         "tools": [TOOL_LOCK, TOOL_UNLOCK],
-        "keywords": ["lock", "unlock", "door", "secure", "secured"],
+        "keywords": [
+            # Actions
+            "lock", "unlock", "locked", "unlocked",
+            "secure", "secured", "unsecure",
+            "bolt", "unbolt",
+            # Device types
+            "door", "doors",
+            "deadbolt",
+            "entry",
+            # Locations (common door names)
+            "front", "back", "rear", "side", "garage",
+        ],
     },
     "climate": {
         "tools": [TOOL_SET_CLIMATE],
-        "keywords": ["temp", "temperature", "heat", "cool", "thermostat", "hvac", "degree", "warm", "cold"],
+        "keywords": [
+            # Temperature
+            "temp", "temperature", "temperatures",
+            "degree", "degrees",
+            # Actions
+            "heat", "heating", "warm", "warmer",
+            "cool", "cooling", "cold", "colder",
+            "hot", "freeze", "freezing",
+            # Device types
+            "thermostat", "thermostats",
+            "hvac", "ac", "a/c",
+            "air", "conditioning",
+            "furnace", "heater",
+            "climate",
+        ],
     },
     "query": {
         "tools": [TOOL_GET_ENTITIES_BY_DOMAIN, TOOL_GET_HISTORY],
-        "keywords": ["list", "all", "show", "history", "what", "which", "how many", "status", "check"],
+        "keywords": [
+            # Questions
+            "what", "which", "how", "where", "when",
+            "is", "are", "was", "were",
+            # Actions
+            "list", "show", "display", "view",
+            "get", "tell", "report", "find",
+            "check", "see", "look",
+            # Concepts
+            "all", "every", "each",
+            "status", "state", "states",
+            "history", "log", "past", "previous",
+            "summary", "overview",
+            # Counts
+            "how many", "count", "number",
+        ],
     },
     "advanced": {
         "tools": [TOOL_CALL_SERVICE, TOOL_TRIGGER_AUTOMATION],
-        "keywords": ["automation", "scene", "script", "service", "run", "trigger", "activate"],
+        "keywords": [
+            # Automation
+            "automation", "automations",
+            "scene", "scenes",
+            "script", "scripts",
+            "routine", "routines",
+            # Actions
+            "run", "trigger", "activate", "execute",
+            "fire", "invoke", "start",
+            "schedule", "workflow",
+            # Service calls
+            "service", "notify", "notification",
+            "media", "play", "pause", "volume",
+        ],
     },
 }
 

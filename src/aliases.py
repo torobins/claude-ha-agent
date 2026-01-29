@@ -67,17 +67,24 @@ class AliasManager:
             logger.debug(f"Exact alias match: '{user_term}' -> '{entity_id}'")
             return entity_id
 
-        # 2. Fuzzy alias match
+        # 2. Fuzzy alias match (try multiple strategies)
         if self.aliases:
-            result = process.extractOne(
-                normalized,
-                self.aliases.keys(),
-                scorer=fuzz.ratio
-            )
-            if result and result[1] >= 80:
-                matched_alias = result[0]
-                entity_id = self.aliases[matched_alias]
-                logger.debug(f"Fuzzy alias match: '{user_term}' -> '{entity_id}' (score: {result[1]})")
+            best_match = None
+            best_score = 0
+
+            # Try token_sort_ratio for word order variations
+            result = process.extractOne(normalized, self.aliases.keys(), scorer=fuzz.token_sort_ratio)
+            if result and result[1] > best_score:
+                best_match, best_score = result[0], result[1]
+
+            # Try token_set_ratio for subset matching
+            result = process.extractOne(normalized, self.aliases.keys(), scorer=fuzz.token_set_ratio)
+            if result and result[1] > best_score:
+                best_match, best_score = result[0], result[1]
+
+            if best_match and best_score >= 75:
+                entity_id = self.aliases[best_match]
+                logger.debug(f"Fuzzy alias match: '{user_term}' -> '{entity_id}' (score: {best_score})")
                 return entity_id
 
         # 3. Fuzzy match from cache friendly names

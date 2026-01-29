@@ -101,14 +101,21 @@ class HACache:
                 return entity
         return None
 
-    def find_entity(self, search: str, threshold: int = 70) -> Optional[str]:
+    def find_entity(self, search: str, threshold: int = 65) -> Optional[str]:
         """
         Fuzzy match entity by friendly name or entity_id.
         Returns entity_id if match found above threshold, None otherwise.
+
+        Uses multiple fuzzy matching strategies:
+        - token_sort_ratio: handles word order variations ("garage overhead" vs "overhead garage")
+        - token_set_ratio: handles partial matches ("kitchen light" vs "kitchen ceiling light")
+        - ratio: standard character similarity
         """
         entities = self.data.get("entities", [])
         if not entities:
             return None
+
+        search_lower = search.lower().strip()
 
         # Build search candidates: friendly_name -> entity_id mapping
         candidates = {}
@@ -128,17 +135,29 @@ class HACache:
         if not candidates:
             return None
 
-        # Fuzzy match
-        result = process.extractOne(
-            search.lower(),
-            candidates.keys(),
-            scorer=fuzz.ratio
-        )
+        # Try multiple fuzzy matching strategies and take the best result
+        best_match = None
+        best_score = 0
+        best_method = ""
 
-        if result and result[1] >= threshold:
-            matched_name = result[0]
-            entity_id = candidates[matched_name]
-            logger.debug(f"Fuzzy matched '{search}' -> '{entity_id}' (score: {result[1]})")
+        # Strategy 1: token_sort_ratio - handles word order variations
+        result = process.extractOne(search_lower, candidates.keys(), scorer=fuzz.token_sort_ratio)
+        if result and result[1] > best_score:
+            best_match, best_score, best_method = result[0], result[1], "token_sort"
+
+        # Strategy 2: token_set_ratio - handles subset matching
+        result = process.extractOne(search_lower, candidates.keys(), scorer=fuzz.token_set_ratio)
+        if result and result[1] > best_score:
+            best_match, best_score, best_method = result[0], result[1], "token_set"
+
+        # Strategy 3: partial_ratio - handles substring matching
+        result = process.extractOne(search_lower, candidates.keys(), scorer=fuzz.partial_ratio)
+        if result and result[1] > best_score:
+            best_match, best_score, best_method = result[0], result[1], "partial"
+
+        if best_match and best_score >= threshold:
+            entity_id = candidates[best_match]
+            logger.debug(f"Fuzzy matched '{search}' -> '{entity_id}' (score: {best_score}, method: {best_method})")
             return entity_id
 
         return None
