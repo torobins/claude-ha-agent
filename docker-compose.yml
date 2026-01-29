@@ -1,0 +1,37 @@
+version: "3.8"
+
+services:
+  claude-ha-agent:
+    build: .
+    container_name: claude-ha-agent
+    restart: unless-stopped
+
+    # Load secrets from .env file
+    env_file:
+      - .env
+
+    volumes:
+      # Config files (read-only)
+      - ./config:/app/config:ro
+      # Persistent data (cache, aliases)
+      - ./data:/app/data
+
+    environment:
+      - TZ=America/New_York  # Change to your timezone
+      - CONFIG_DIR=/app/config
+
+    # Optional: healthcheck
+    healthcheck:
+      test: ["CMD", "python", "-c", "import sys; sys.exit(0)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+    # Resource limits (optional, adjust as needed)
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+        reservations:
+          memory: 128M

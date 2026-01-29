@@ -1,0 +1,27 @@
+# Scheduled Tasks for Claude HA Agent
+#
+# Cron format: minute hour day month day_of_week
+# Examples:
+#   "0 21 * * *"     = 9:00 PM daily
+#   "0 7 * * 1-5"    = 7:00 AM weekdays only
+#   "*/30 * * * *"   = every 30 minutes
+#   "0 0 * * 0"      = midnight on Sundays
+
+schedules:
+  # Nightly security check
+  - name: "nightly_lock_check"
+    cron: "0 21 * * *"  # 9 PM daily
+    prompt: "Check all door locks and report their status. If any are unlocked, emphasize this."
+    enabled: true
+
+  # Morning summary
+  - name: "morning_summary"
+    cron: "0 7 * * *"  # 7 AM daily
+    prompt: "Give me a brief morning summary: current indoor/outdoor temperature, any doors/windows open, and garage door status."
+    enabled: false  # Enable when ready
+
+  # Midday energy check
+  - name: "energy_check"
+    cron: "0 12 * * *"  # Noon daily
+    prompt: "Check if any lights have been left on that shouldn't be during the day."
+    enabled: false
