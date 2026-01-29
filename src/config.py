@@ -29,7 +29,7 @@ class HomeAssistantConfig:
 @dataclass
 class ClaudeConfig:
     api_key: str = field(repr=False)
-    model: str = "claude-sonnet-4-20250514"
+    model: str = "claude-haiku-4-5-20251001"
     max_history: int = 10
 
 
@@ -117,7 +117,7 @@ def load_config(config_dir: str = "/app/config") -> Config:
         ),
         claude=ClaudeConfig(
             api_key=anthropic_api_key,
-            model=claude_config.get("model", "claude-sonnet-4-20250514"),
+            model=claude_config.get("model", "claude-haiku-4-5-20251001"),
             max_history=claude_config.get("max_history", 10)
         ),
         telegram=TelegramConfig(

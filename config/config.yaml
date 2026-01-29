@@ -6,10 +6,10 @@ home_assistant:
 
 claude:
   # Model to use. Options:
-  # - claude-sonnet-4-20250514 (recommended - good balance of speed/capability)
+  # - claude-haiku-4-5-20251001 (default - fastest, lowest cost)
+  # - claude-sonnet-4-20250514 (good balance of speed/capability)
   # - claude-opus-4-5-20251101 (most capable, higher cost)
-  # - claude-haiku-4-5-20251001 (fastest, lowest cost)
-  model: "claude-sonnet-4-20250514"
+  model: "claude-haiku-4-5-20251001"
 
   # Number of message pairs to keep in conversation history
   max_history: 10
