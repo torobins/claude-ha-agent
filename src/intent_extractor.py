@@ -11,6 +11,7 @@ import anthropic
 from .config import get_config
 from .ha_cache import get_cache
 from .ha_client import get_ha_client
+from .aliases import get_alias_manager
 
 logger = logging.getLogger(__name__)
 
@@ -77,11 +78,36 @@ Command: """
 async def get_condensed_entity_list() -> str:
     """Get a condensed entity list from cache for the prompt.
 
-    For lock entities, includes current state to help disambiguate
-    between working locks and stale/unknown ones.
+    Includes learned aliases first for better matching, then
+    entity list by domain. For lock entities, includes current
+    state to help disambiguate between working and stale ones.
     """
     cache = get_cache()
     entities = cache.data.get("entities", [])
+
+    # Start with learned aliases - these take priority
+    lines = []
+    try:
+        alias_manager = get_alias_manager()
+        aliases = alias_manager.get_all()
+        if aliases:
+            # Group aliases by entity to avoid duplicates
+            entity_to_aliases: dict[str, list[str]] = {}
+            for alias, entity_id in aliases.items():
+                if entity_id not in entity_to_aliases:
+                    entity_to_aliases[entity_id] = []
+                entity_to_aliases[entity_id].append(alias)
+
+            # Format: "alias1, alias2 -> entity_id"
+            alias_lines = []
+            for entity_id, alias_list in entity_to_aliases.items():
+                alias_lines.append(f"{', '.join(alias_list[:3])}: {entity_id}")
+
+            lines.append("KNOWN ALIASES (prefer these):")
+            lines.append(", ".join(alias_lines[:20]))  # Limit to 20 entries
+            lines.append("")
+    except Exception as e:
+        logger.debug(f"Could not load aliases: {e}")
 
     # Group by domain, showing friendly_name → entity_id
     by_domain: dict[str, list[str]] = {}
@@ -130,7 +156,7 @@ async def get_condensed_entity_list() -> str:
             by_domain[domain].append(entity_id)
 
     # Build condensed list - prioritize important domains
-    lines = []
+    lines.append("ENTITIES BY DOMAIN:")
 
     # Priority domains first
     for domain in priority_domains:
