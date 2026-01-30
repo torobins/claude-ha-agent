@@ -196,6 +196,20 @@ async def try_direct_execution(
             else:
                 success = False
 
+        elif intent_result.intent == "set_brightness":
+            # Set light brightness (value is 0-100 percentage)
+            if intent_result.value and resolved_entity:
+                try:
+                    brightness_pct = int(intent_result.value.replace("%", "").strip())
+                    brightness_pct = max(0, min(100, brightness_pct))  # Clamp to 0-100
+                    await ha.turn_on(resolved_entity, brightness_pct=brightness_pct)
+                    state = f"{brightness_pct}%"
+                    logger.info(f"Direct execution: set_brightness {resolved_entity} to {brightness_pct}%")
+                except ValueError:
+                    success = False
+            else:
+                success = False
+
         else:
             # Unknown intent - shouldn't happen but fall back
             return None, None, 0, 0

@@ -18,10 +18,10 @@ logger = logging.getLogger(__name__)
 @dataclass
 class ExtractedIntent:
     """Result of intent extraction."""
-    intent: str  # turn_on, turn_off, toggle, lock, unlock, get_state, set_climate, unknown
+    intent: str  # turn_on, turn_off, toggle, lock, unlock, get_state, set_climate, set_brightness, unknown
     entity_id: Optional[str]  # Actual entity_id from HA (e.g., "light.kitchen")
     confidence: str  # high, medium, low
-    value: Optional[str] = None  # For climate: temperature or mode
+    value: Optional[str] = None  # For climate: temperature; for brightness: 0-100 percentage
     needs_full_agent: bool = False  # True if this should go to full agent
     input_tokens: int = 0  # Tokens used for extraction
     output_tokens: int = 0
@@ -32,7 +32,8 @@ SIMPLE_INTENTS = {
     "turn_on", "turn_off", "toggle",
     "lock", "unlock",
     "get_state",
-    "set_climate"
+    "set_climate",
+    "set_brightness"
 }
 
 # Keywords that suggest we need the full agent
@@ -54,7 +55,7 @@ Available entities:
 Respond ONLY with JSON:
 {{"intent": "<intent>", "entity_id": "<exact entity_id from list or null>", "confidence": "<high/medium/low>", "value": "<value or null>"}}
 
-Intents: turn_on, turn_off, toggle, lock, unlock, get_state, set_climate, unknown
+Intents: turn_on, turn_off, toggle, lock, unlock, get_state, set_climate, set_brightness, unknown
 
 Pick the entity_id that best matches what the user is asking about. Use semantic understanding, not just word matching.
 
@@ -65,6 +66,9 @@ Examples:
 - "is the front door locked" → {{"intent": "get_state", "entity_id": "lock.front_door", "confidence": "high", "value": null}}
 - "how much power" → {{"intent": "get_state", "entity_id": "sensor.power_total", "confidence": "high", "value": null}}
 - "set temp to 72" → {{"intent": "set_climate", "entity_id": "climate.thermostat", "confidence": "high", "value": "72"}}
+- "set kitchen light to 50%" → {{"intent": "set_brightness", "entity_id": "light.kitchen", "confidence": "high", "value": "50"}}
+- "dim the bedroom light to 25" → {{"intent": "set_brightness", "entity_id": "light.bedroom", "confidence": "high", "value": "25"}}
+- "make foyer light brightness 100" → {{"intent": "set_brightness", "entity_id": "light.foyer", "confidence": "high", "value": "100"}}
 - "why is it cold" → {{"intent": "unknown", "entity_id": null, "confidence": "low", "value": null}}
 
 Command: """
@@ -307,6 +311,10 @@ def get_response_template(intent: str, entity_name: str, success: bool, state: O
         "set_climate": [
             f"Climate adjusted for {entity_name}.",
             f"Done! Temperature settings updated.",
+        ],
+        "set_brightness": [
+            f"Set {entity_name} to {state}." if state else f"Adjusted brightness for {entity_name}.",
+            f"Done! {entity_name} brightness set to {state}." if state else f"Brightness adjusted.",
         ],
     }
 
