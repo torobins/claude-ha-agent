@@ -10,6 +10,7 @@ import anthropic
 
 from .config import get_config
 from .ha_cache import get_cache
+from .ha_client import get_ha_client
 
 logger = logging.getLogger(__name__)
 
@@ -57,6 +58,8 @@ Intents: turn_on, turn_off, toggle, lock, unlock, get_state, set_climate, unknow
 
 Pick the entity_id that best matches what the user is asking about. Use semantic understanding, not just word matching.
 
+IMPORTANT for locks: State is shown in [brackets]. Prefer entities with [locked] or [unlocked] state over [unknown] ones - unknown usually means stale/defunct entities.
+
 Examples:
 - "turn on the kitchen light" → {{"intent": "turn_on", "entity_id": "light.kitchen_light", "confidence": "high", "value": null}}
 - "is the front door locked" → {{"intent": "get_state", "entity_id": "lock.front_door", "confidence": "high", "value": null}}
@@ -67,8 +70,12 @@ Examples:
 Command: """
 
 
-def get_condensed_entity_list() -> str:
-    """Get a condensed entity list from cache for the prompt."""
+async def get_condensed_entity_list() -> str:
+    """Get a condensed entity list from cache for the prompt.
+
+    For lock entities, includes current state to help disambiguate
+    between working locks and stale/unknown ones.
+    """
     cache = get_cache()
     entities = cache.data.get("entities", [])
 
@@ -77,6 +84,22 @@ def get_condensed_entity_list() -> str:
 
     # Priority domains to always include
     priority_domains = {"light", "switch", "lock", "sensor", "climate", "cover", "fan"}
+
+    # For lock domain, fetch current states to show which are working
+    lock_states = {}
+    try:
+        ha = get_ha_client()
+        lock_entities = [e for e in entities if e.get("entity_id", "").startswith("lock.")]
+        for lock in lock_entities:
+            entity_id = lock.get("entity_id")
+            try:
+                state_data = await ha.get_state(entity_id)
+                state = state_data.get("state", "unknown")
+                lock_states[entity_id] = state
+            except Exception:
+                lock_states[entity_id] = "unknown"
+    except Exception as e:
+        logger.warning(f"Could not fetch lock states: {e}")
 
     for entity in entities:
         entity_id = entity.get("entity_id", "")
@@ -90,7 +113,14 @@ def get_condensed_entity_list() -> str:
             by_domain[domain] = []
 
         # Format: "friendly_name (entity_id)" or just "entity_id"
-        if friendly_name and friendly_name != entity_id:
+        # For locks, include state to help Claude pick working ones
+        if domain == "lock" and entity_id in lock_states:
+            state = lock_states[entity_id]
+            if friendly_name and friendly_name != entity_id:
+                by_domain[domain].append(f"{friendly_name} [{state}]: {entity_id}")
+            else:
+                by_domain[domain].append(f"{entity_id} [{state}]")
+        elif friendly_name and friendly_name != entity_id:
             by_domain[domain].append(f"{friendly_name}: {entity_id}")
         else:
             by_domain[domain].append(entity_id)
@@ -153,8 +183,8 @@ async def extract_intent(message: str) -> ExtractedIntent:
     config = get_config()
     client = anthropic.Anthropic(api_key=config.claude.api_key)
 
-    # Get condensed entity list from cache
-    entity_list = get_condensed_entity_list()
+    # Get condensed entity list from cache (includes lock states for disambiguation)
+    entity_list = await get_condensed_entity_list()
 
     # Build prompt with entity list
     prompt = INTENT_EXTRACTION_PROMPT.format(entity_list=entity_list) + message
