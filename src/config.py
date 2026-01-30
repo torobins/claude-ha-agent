@@ -29,7 +29,8 @@ class HomeAssistantConfig:
 @dataclass
 class ClaudeConfig:
     api_key: str = field(repr=False)
-    model: str = "claude-haiku-4-5-20251001"
+    model: str = "claude-haiku-4-5-20251001"  # Used for intent extraction
+    full_agent_model: str = "claude-sonnet-4-20250514"  # Used for complex queries
     max_history: int = 10
 
 
@@ -118,6 +119,7 @@ def load_config(config_dir: str = "/app/config") -> Config:
         claude=ClaudeConfig(
             api_key=anthropic_api_key,
             model=claude_config.get("model", "claude-haiku-4-5-20251001"),
+            full_agent_model=claude_config.get("full_agent_model", "claude-sonnet-4-20250514"),
             max_history=claude_config.get("max_history", 10)
         ),
         telegram=TelegramConfig(

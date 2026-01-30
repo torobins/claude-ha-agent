@@ -259,8 +259,8 @@ async def run_agent(
         logger.info(f"Direct execution used: {direct_input}+{direct_output} tokens (saved full agent loop)")
         return direct_response, direct_history, budget_warning
 
-    # Fall back to full agent loop
-    logger.info("Using full agent loop")
+    # Fall back to full agent loop using Sonnet (more reliable for tool use)
+    logger.info(f"Using full agent loop with {config.claude.full_agent_model}")
 
     # Build messages list - clean history to remove any empty content
     messages = _clean_history(list(conversation_history)) if conversation_history else []
@@ -278,7 +278,7 @@ async def run_agent(
         logger.debug(f"Agent iteration {iteration + 1}")
 
         response = client.messages.create(
-            model=config.claude.model,
+            model=config.claude.full_agent_model,  # Use Sonnet for reliable tool use
             max_tokens=4096,
             system=system_prompt,
             tools=selected_tools,
