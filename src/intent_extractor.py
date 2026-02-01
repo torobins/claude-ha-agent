@@ -23,6 +23,8 @@ class ExtractedIntent:
     entity_id: Optional[str]  # Actual entity_id from HA (e.g., "light.kitchen")
     confidence: str  # high, medium, low
     value: Optional[str] = None  # For climate: temperature; for brightness: 0-100 percentage
+    alias_to_save: Optional[str] = None  # If user wants to save an alias (e.g., "remember this as X")
+    response: Optional[str] = None  # Natural language response to send to user
     needs_full_agent: bool = False  # True if this should go to full agent
     input_tokens: int = 0  # Tokens used for extraction
     output_tokens: int = 0
@@ -46,31 +48,37 @@ COMPLEX_KEYWORDS = [
     "help", "what can you",
     "schedule", "automate", "routine",
     "scene", "script",
+    # Automation creation triggers
+    "automation", "whenever", "automatically",
+    "create a rule", "set up a rule", "make it so",
+    "when i leave", "when i arrive", "when i get home",
 ]
 
-INTENT_EXTRACTION_PROMPT = """Extract the intent and entity_id from this smart home command.
+INTENT_EXTRACTION_PROMPT = """Extract the intent from this smart home command and write a brief, natural response.
 
 Available entities:
 {entity_list}
 
 Respond ONLY with JSON:
-{{"intent": "<intent>", "entity_id": "<exact entity_id from list or null>", "confidence": "<high/medium/low>", "value": "<value or null>"}}
+{{"intent": "<intent>", "entity_id": "<exact entity_id from list or null>", "confidence": "<high/medium/low>", "value": "<value or null>", "save_alias": "<alias name or null>", "response": "<brief natural response>"}}
 
 Intents: turn_on, turn_off, toggle, lock, unlock, get_state, set_climate, set_brightness, unknown
 
-Pick the entity_id that best matches what the user is asking about. Use semantic understanding, not just word matching.
+Rules:
+- Pick the entity_id that best matches semantically
+- For locks: prefer [locked]/[unlocked] states over [unknown] (stale entities)
+- If user says "remember as"/"call this"/"save as", extract alias in "save_alias"
+- Write a short, friendly response (1 sentence) confirming the action. Use the device's friendly name.
 
-IMPORTANT for locks: State is shown in [brackets]. Prefer entities with [locked] or [unlocked] state over [unknown] ones - unknown usually means stale/defunct entities.
+Response style: Casual and helpful, like a smart assistant. Vary your responses naturally.
+- Good: "Kitchen light is on." / "Got it, turned on the kitchen light." / "Living room lamp is off now."
+- Avoid: "Done! I have turned on light.kitchen_light." (too robotic, uses entity_id)
 
 Examples:
-- "turn on the kitchen light" → {{"intent": "turn_on", "entity_id": "light.kitchen_light", "confidence": "high", "value": null}}
-- "is the front door locked" → {{"intent": "get_state", "entity_id": "lock.front_door", "confidence": "high", "value": null}}
-- "how much power" → {{"intent": "get_state", "entity_id": "sensor.power_total", "confidence": "high", "value": null}}
-- "set temp to 72" → {{"intent": "set_climate", "entity_id": "climate.thermostat", "confidence": "high", "value": "72"}}
-- "set kitchen light to 50%" → {{"intent": "set_brightness", "entity_id": "light.kitchen", "confidence": "high", "value": "50"}}
-- "dim the bedroom light to 25" → {{"intent": "set_brightness", "entity_id": "light.bedroom", "confidence": "high", "value": "25"}}
-- "make foyer light brightness 100" → {{"intent": "set_brightness", "entity_id": "light.foyer", "confidence": "high", "value": "100"}}
-- "why is it cold" → {{"intent": "unknown", "entity_id": null, "confidence": "low", "value": null}}
+- "turn on the kitchen light" → {{"intent": "turn_on", "entity_id": "light.kitchen_light", "confidence": "high", "value": null, "save_alias": null, "response": "Kitchen light is on."}}
+- "is the front door locked" → {{"intent": "get_state", "entity_id": "lock.front_door", "confidence": "high", "value": null, "save_alias": null, "response": "Let me check the front door..."}}
+- "set temp to 72" → {{"intent": "set_climate", "entity_id": "climate.thermostat", "confidence": "high", "value": "72", "save_alias": null, "response": "Setting the thermostat to 72°."}}
+- "turn off bedroom lights" → {{"intent": "turn_off", "entity_id": "light.bedroom", "confidence": "high", "value": null, "save_alias": null, "response": "Bedroom lights are off."}}
 
 Command: """
 
@@ -188,7 +196,14 @@ def should_use_full_agent(message: str) -> bool:
         return True
 
     # Multiple entities mentioned (e.g., "turn on kitchen and living room lights")
+    # But allow "and remember", "and call this", "and save" for alias saving
     if ' and ' in msg_lower and re.search(r'\b(light|lock|switch|fan)s?\b', msg_lower):
+        # Check if it's just an alias-saving phrase
+        if not re.search(r'\band\s+(remember|call\s+this|save\s+as|name\s+this)', msg_lower):
+            return True
+
+    # Automation creation patterns (e.g., "when the door opens, turn on the light")
+    if re.search(r'\bwhen\s+(the|my|a)\s+\w+', msg_lower):
         return True
 
     return False
@@ -222,7 +237,7 @@ async def extract_intent(message: str) -> ExtractedIntent:
     try:
         response = client.messages.create(
             model=config.claude.model,
-            max_tokens=100,
+            max_tokens=150,  # Slightly higher to accommodate natural response
             messages=[{
                 "role": "user",
                 "content": prompt
@@ -254,6 +269,8 @@ async def extract_intent(message: str) -> ExtractedIntent:
         entity_id = data.get("entity_id")
         confidence = data.get("confidence", "low")
         value = data.get("value")
+        save_alias = data.get("save_alias")
+        natural_response = data.get("response")
 
         # Validate entity_id exists in cache if provided
         if entity_id:
@@ -279,13 +296,16 @@ async def extract_intent(message: str) -> ExtractedIntent:
         # Log token usage
         input_tokens = response.usage.input_tokens
         output_tokens = response.usage.output_tokens
-        logger.info(f"Intent extraction: {input_tokens}+{output_tokens} tokens, intent={intent}, entity_id={entity_id}")
+        alias_log = f", alias={save_alias}" if save_alias else ""
+        logger.info(f"Intent extraction: {input_tokens}+{output_tokens} tokens, intent={intent}, entity_id={entity_id}{alias_log}")
 
         return ExtractedIntent(
             intent=intent,
             entity_id=entity_id,
             confidence=confidence,
             value=value,
+            alias_to_save=save_alias,
+            response=natural_response,
             needs_full_agent=needs_full,
             input_tokens=input_tokens,
             output_tokens=output_tokens

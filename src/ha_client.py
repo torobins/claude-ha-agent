@@ -203,6 +203,85 @@ class HomeAssistantClient:
         """Trigger an automation."""
         return await self.call_service("automation", "trigger", entity_id)
 
+    # --- Automation Management Methods ---
+
+    async def create_automation(
+        self,
+        automation_id: str,
+        alias: str,
+        trigger_entity: str,
+        trigger_state: str,
+        action_entity: str,
+        action_service: str,
+        description: Optional[str] = None
+    ) -> dict:
+        """
+        Create a simple automation via the config API.
+
+        Args:
+            automation_id: Unique ID for the automation (e.g., "claude_auto_1234")
+            alias: Human-readable name
+            trigger_entity: Entity that triggers the automation
+            trigger_state: State that triggers (e.g., "on", "off", "open", "home")
+            action_entity: Entity to control when triggered
+            action_service: Service to call (e.g., "light.turn_on", "lock.lock")
+            description: Optional description
+        """
+        # Parse the action service
+        if "." in action_service:
+            action_domain, service_name = action_service.split(".", 1)
+        else:
+            action_domain = action_entity.split(".")[0]
+            service_name = action_service
+
+        automation_config = {
+            "alias": alias,
+            "description": description or f"Created by Claude HA Agent",
+            "trigger": [{
+                "platform": "state",
+                "entity_id": trigger_entity,
+                "to": trigger_state
+            }],
+            "condition": [],
+            "action": [{
+                "service": f"{action_domain}.{service_name}",
+                "target": {
+                    "entity_id": action_entity
+                }
+            }],
+            "mode": "single"
+        }
+
+        session = await self._get_session()
+        url = f"{self.base_url}/api/config/automation/config/{automation_id}"
+        async with session.post(url, json=automation_config) as resp:
+            resp.raise_for_status()
+            result = await resp.json()
+            logger.info(f"Created automation: {automation_id} ({alias})")
+            return {"success": True, "automation_id": automation_id, "result": result}
+
+    async def get_automations(self) -> list[dict]:
+        """Get all automations."""
+        states = await self.get_states("automation")
+        return [
+            {
+                "entity_id": s["entity_id"],
+                "friendly_name": s.get("attributes", {}).get("friendly_name", s["entity_id"]),
+                "state": s["state"],
+                "last_triggered": s.get("attributes", {}).get("last_triggered")
+            }
+            for s in states
+        ]
+
+    async def delete_automation(self, automation_id: str) -> dict:
+        """Delete an automation by ID."""
+        session = await self._get_session()
+        url = f"{self.base_url}/api/config/automation/config/{automation_id}"
+        async with session.delete(url) as resp:
+            resp.raise_for_status()
+            logger.info(f"Deleted automation: {automation_id}")
+            return {"success": True, "automation_id": automation_id}
+
     # --- Utility Methods ---
 
     async def check_connection(self) -> bool:

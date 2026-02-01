@@ -218,13 +218,32 @@ async def try_direct_execution(
         logger.error(f"Direct execution failed: {e}")
         success = False
 
-    # Generate response
-    response_text = get_response_template(
-        intent_result.intent,
-        entity_name or "device",
-        success,
-        state
-    )
+    # Generate response - use LLM-generated response when available
+    if success and intent_result.response:
+        response_text = intent_result.response
+        # For get_state, append the actual state value if we have it
+        if intent_result.intent == "get_state" and state:
+            # Check if state is already in the response
+            if state.lower() not in response_text.lower():
+                response_text = f"{entity_name} is {state}."
+    else:
+        # Fall back to template for failures or missing response
+        response_text = get_response_template(
+            intent_result.intent,
+            entity_name or "device",
+            success,
+            state
+        )
+
+    # Save alias if requested
+    if success and intent_result.alias_to_save and resolved_entity:
+        try:
+            alias_manager = get_alias_manager()
+            alias_manager.save(intent_result.alias_to_save, resolved_entity)
+            response_text += f" (Saved alias: '{intent_result.alias_to_save}')"
+            logger.info(f"Saved alias via direct execution: '{intent_result.alias_to_save}' -> '{resolved_entity}'")
+        except Exception as e:
+            logger.warning(f"Failed to save alias: {e}")
 
     # Update conversation history
     messages = _clean_history(list(conversation_history)) if conversation_history else []

@@ -174,6 +174,61 @@ TOOL_SAVE_ALIAS = {
     }
 }
 
+TOOL_CREATE_AUTOMATION = {
+    "name": "create_automation",
+    "description": "Create a simple automation rule. Use this when the user wants something to happen automatically when a condition is met (e.g., 'when the door opens, turn on the light').",
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "name": {
+                "type": "string",
+                "description": "Human-readable name for the automation (e.g., 'Turn on porch light when front door opens')"
+            },
+            "trigger_entity": {
+                "type": "string",
+                "description": "Entity ID that triggers the automation (e.g., 'binary_sensor.front_door', 'sensor.motion')"
+            },
+            "trigger_state": {
+                "type": "string",
+                "description": "State that triggers the action (e.g., 'on', 'off', 'open', 'closed', 'home', 'away')"
+            },
+            "action_entity": {
+                "type": "string",
+                "description": "Entity ID to control when triggered (e.g., 'light.porch', 'lock.front_door')"
+            },
+            "action": {
+                "type": "string",
+                "description": "Action to perform: 'turn_on', 'turn_off', 'toggle', 'lock', 'unlock'"
+            }
+        },
+        "required": ["name", "trigger_entity", "trigger_state", "action_entity", "action"]
+    }
+}
+
+TOOL_LIST_AUTOMATIONS = {
+    "name": "list_automations",
+    "description": "List all automations in Home Assistant.",
+    "input_schema": {
+        "type": "object",
+        "properties": {}
+    }
+}
+
+TOOL_DELETE_AUTOMATION = {
+    "name": "delete_automation",
+    "description": "Delete an automation by its entity ID.",
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "entity_id": {
+                "type": "string",
+                "description": "The automation entity ID (e.g., 'automation.turn_on_porch_light')"
+            }
+        },
+        "required": ["entity_id"]
+    }
+}
+
 
 # =============================================================================
 # Tool Groups
@@ -255,13 +310,19 @@ TOOL_GROUPS = {
         ],
     },
     "advanced": {
-        "tools": [TOOL_CALL_SERVICE, TOOL_TRIGGER_AUTOMATION],
+        "tools": [TOOL_CALL_SERVICE, TOOL_TRIGGER_AUTOMATION, TOOL_CREATE_AUTOMATION, TOOL_LIST_AUTOMATIONS, TOOL_DELETE_AUTOMATION],
         "keywords": [
             # Automation
             "automation", "automations",
             "scene", "scenes",
             "script", "scripts",
             "routine", "routines",
+            # Automation creation triggers
+            "when", "whenever", "if",
+            "automatically", "auto",
+            "create automation", "make automation",
+            "set up", "setup",
+            "rule", "rules",
             # Actions
             "run", "trigger", "activate", "execute",
             "fire", "invoke", "start",
@@ -537,6 +598,58 @@ TOOLS = [
             "type": "object",
             "properties": {}
         }
+    },
+    {
+        "name": "create_automation",
+        "description": "Create a simple automation rule. Use when user wants something to happen automatically (e.g., 'when the door opens, turn on the light', 'automatically lock the door when I leave').",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "name": {
+                    "type": "string",
+                    "description": "Human-readable name for the automation"
+                },
+                "trigger_entity": {
+                    "type": "string",
+                    "description": "Entity that triggers the automation (e.g., binary_sensor, sensor, person)"
+                },
+                "trigger_state": {
+                    "type": "string",
+                    "description": "State that triggers (e.g., 'on', 'off', 'open', 'home', 'away')"
+                },
+                "action_entity": {
+                    "type": "string",
+                    "description": "Entity to control when triggered"
+                },
+                "action": {
+                    "type": "string",
+                    "description": "Action: turn_on, turn_off, toggle, lock, unlock"
+                }
+            },
+            "required": ["name", "trigger_entity", "trigger_state", "action_entity", "action"]
+        }
+    },
+    {
+        "name": "list_automations",
+        "description": "List all automations in Home Assistant.",
+        "input_schema": {
+            "type": "object",
+            "properties": {}
+        }
+    },
+    {
+        "name": "delete_automation",
+        "description": "Delete an automation.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "entity_id": {
+                    "type": "string",
+                    "description": "The automation entity ID to delete"
+                }
+            },
+            "required": ["entity_id"]
+        }
     }
 ]
 
@@ -713,6 +826,62 @@ async def execute_tool(name: str, arguments: dict) -> Any:
         elif name == "get_known_aliases":
             aliases = alias_manager.get_all()
             return {"aliases": aliases, "count": len(aliases)}
+
+        elif name == "create_automation":
+            import uuid
+            # Generate a unique ID for the automation
+            auto_id = f"claude_{uuid.uuid4().hex[:8]}"
+
+            # Resolve entities
+            trigger_entity = resolve_entity(arguments["trigger_entity"])
+            action_entity = resolve_entity(arguments["action_entity"])
+
+            # Map action to service
+            action = arguments["action"].lower()
+            action_map = {
+                "turn_on": "turn_on",
+                "turn_off": "turn_off",
+                "toggle": "toggle",
+                "lock": "lock",
+                "unlock": "unlock",
+            }
+            service_action = action_map.get(action, action)
+
+            # Determine the service domain from action entity
+            action_domain = action_entity.split(".")[0]
+            action_service = f"{action_domain}.{service_action}"
+
+            result = await ha.create_automation(
+                automation_id=auto_id,
+                alias=arguments["name"],
+                trigger_entity=trigger_entity,
+                trigger_state=arguments["trigger_state"],
+                action_entity=action_entity,
+                action_service=action_service
+            )
+            return {
+                "success": True,
+                "automation_id": auto_id,
+                "name": arguments["name"],
+                "message": f"Created automation: {arguments['name']}. It will {service_action} {action_entity} when {trigger_entity} becomes {arguments['trigger_state']}."
+            }
+
+        elif name == "list_automations":
+            automations = await ha.get_automations()
+            return {
+                "count": len(automations),
+                "automations": automations[:25]  # Limit to 25
+            }
+
+        elif name == "delete_automation":
+            entity_id = arguments["entity_id"]
+            # Extract automation ID from entity_id (e.g., automation.claude_abc123 -> claude_abc123)
+            if entity_id.startswith("automation."):
+                auto_id = entity_id.replace("automation.", "")
+            else:
+                auto_id = entity_id
+            result = await ha.delete_automation(auto_id)
+            return {"success": True, "deleted": entity_id}
 
         else:
             return {"error": f"Unknown tool: {name}"}
