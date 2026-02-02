@@ -80,20 +80,73 @@ def _serialize_content(content) -> list:
 
 
 def _clean_history(history: list) -> list:
-    """Clean conversation history to ensure valid message format."""
+    """Clean conversation history to ensure valid message format.
+
+    Handles:
+    - Empty messages
+    - Orphaned tool_result blocks (no matching tool_use)
+    - Malformed message sequences
+    """
+    if not history:
+        return []
+
     cleaned = []
+    prev_tool_use_ids = set()  # Track tool_use IDs from previous assistant message
+
     for msg in history:
         if not msg.get("content"):
-            continue  # Skip empty content messages
+            continue
 
         content = msg["content"]
-        # Ensure content is not empty
+        role = msg.get("role")
+
+        # Handle empty content
         if isinstance(content, str) and not content.strip():
             continue
         if isinstance(content, list) and len(content) == 0:
             continue
 
+        # If this is an assistant message, track any tool_use IDs
+        if role == "assistant" and isinstance(content, list):
+            prev_tool_use_ids = set()
+            for block in content:
+                if isinstance(block, dict) and block.get("type") == "tool_use":
+                    prev_tool_use_ids.add(block.get("id"))
+            cleaned.append(msg)
+            continue
+
+        # If this is a user message with tool_results, validate them
+        if role == "user" and isinstance(content, list):
+            # Check if this contains tool_result blocks
+            has_tool_results = any(
+                isinstance(block, dict) and block.get("type") == "tool_result"
+                for block in content
+            )
+
+            if has_tool_results:
+                # Filter to only valid tool_results (matching a previous tool_use)
+                valid_blocks = []
+                for block in content:
+                    if isinstance(block, dict) and block.get("type") == "tool_result":
+                        if block.get("tool_use_id") in prev_tool_use_ids:
+                            valid_blocks.append(block)
+                        else:
+                            logger.warning(f"Removing orphaned tool_result: {block.get('tool_use_id')}")
+                    else:
+                        valid_blocks.append(block)
+
+                # If no valid blocks remain, skip this message entirely
+                if not valid_blocks:
+                    logger.warning("Skipping message with no valid tool_results")
+                    continue
+
+                msg = {"role": "user", "content": valid_blocks}
+
+            # Clear tool_use tracking after processing tool_results
+            prev_tool_use_ids = set()
+
         cleaned.append(msg)
+
     return cleaned
 
 
