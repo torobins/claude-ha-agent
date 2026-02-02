@@ -870,7 +870,7 @@ async def execute_tool(name: str, arguments: dict) -> Any:
             automations = await ha.get_automations()
             return {
                 "count": len(automations),
-                "automations": automations[:25]  # Limit to 25
+                "automations": automations  # Return all
             }
 
         elif name == "delete_automation":
